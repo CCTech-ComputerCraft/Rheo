@@ -1,0 +1,602 @@
+local lpeg = require("lulpeg")
+
+local tArgs = {...}
+local Scopes = { {} }
+
+if #tArgs < 1 then
+    isFile = false
+else
+    fl = shell.resolve(tArgs[1])
+    table.remove(tArgs, 1)
+    isFile = true
+end
+
+function eval_expr(expr)
+    local accum = eval(expr[2])
+    for i = 3, #expr, 2 do
+        local operator = expr[i]
+        local num2 = eval(expr[i+1])
+
+        if operator == '+' then
+            accum = accum + num2
+        elseif operator == '-' then
+            accum = accum - num2
+        elseif operator == '*' then
+            accum = accum * num2
+        elseif operator == '/' then
+            accum = accum / num2
+        end
+    end
+    return accum
+end
+
+function eval_bool(expr)
+    local num1 = eval(expr[2])
+    local operator = expr[3]
+    local num2 = eval(expr[4])
+
+    if operator == '<' then
+        return num1 < num2
+    elseif operator == '=<' then
+        return num1 <= num2
+    elseif operator == '>' then
+        return num1 > num2
+    elseif operator == '=>' then
+        return num1 >= num2
+    elseif operator == '==' then
+        return num1 == num2
+    elseif operator == '!=' then
+        return num1 ~= num2
+    end
+end
+
+function eval(ast)
+    if type(ast) == "number" then
+        return ast
+    elseif type(ast) == "string" then
+        if string.find(ast, "%%#br") then
+            ast = ast:gsub("%%#br", "\n")
+        end
+        if string.find(ast, "%%#dQ") then
+            ast = ast:gsub("%%#dQ", "\"")
+        end
+        if string.find(ast, "%%#dQ") then
+            ast = ast:gsub("%%#dQ", "\'")
+        end
+        return ast
+    elseif ast[1] == "string" then
+        return eval(ast[2])
+    elseif ast[1] == "expr" or ast[1] == "term" then
+        return eval_expr(ast)
+    elseif ast[1] == "none" then
+        return nil
+    elseif ast[1] == "true" then
+        return true
+    elseif ast[1] == "false" then
+        return false
+    elseif ast[1] == "array" then
+        local new = {}
+        for _, el in ipairs(ast[2]) do
+            table.insert(new, eval(el))
+        end
+        return new
+    elseif ast[1] == "ref" then
+        return lookup(ast)
+    elseif ast[1] == "assign" then
+        return assign(ast[2], eval(ast[3]))
+    elseif ast[1] == "list" then
+        local last = nil
+        for i = 2, #ast do
+            last = eval(ast[i])
+        end
+
+        return last
+    elseif ast[1] == "if" then
+        if eval_bool(ast[2]) then
+            return eval(ast[3])
+        else
+            return eval(ast[4])
+        end
+    elseif ast[1] == "while" then
+        while eval_bool(ast[2]) do
+            eval(ast[3])
+        end
+    elseif ast[1] == "func" then
+        return {args = ast[2],
+                code = ast[3],
+                scope = Scopes[#Scopes],
+                reVal = ast[4] }
+    elseif ast[1] == "funcdef" then
+        return assign(ast[2], { args = ast[3], code = ast[4], scope = Scopes[#Scopes], reVal = "function" })
+    elseif ast[1] == "call" then
+        local fn = eval(ast[2])
+
+        if not fn then
+            throw("<Call> Undefined function")
+            return
+        end
+
+        if type(fn) ~= "function" then
+            throw("<Call> Function expected, got "..type())
+        end
+
+        scope = setmetatable({}, {__index=fn.scope})
+
+        for i, name in ipairs(fn.args) do
+            scope[name] = eval(ast[3][i])
+        end
+
+        table.insert(Scopes, scope)
+        eval(fn.code)
+        table.remove(Scopes)
+        return eval(fn.reVal)
+    elseif ast[1] == "print" then
+        local str = eval(ast[2])
+
+        if type(str) ~= "string" then
+            throw("Attempt to print "..type(str)..": expected String")
+        else
+            print(str)
+        end
+    elseif ast[1] == "random" then
+        local num1 = eval_expr(ast[2])
+        local num2 = eval_expr(ast[3])
+
+        if type(num1) == "number" and type(num2) == "number" then
+            return math.random(num1, num2)
+        else
+            error("Number expected, got "..type(num2)..", "..type(num3))
+        end
+    elseif ast[1] == "input" then
+        local input = io.read()
+        return eval(input)
+    elseif ast[1] == "execute" then
+        local str = eval(ast[2])
+        if type(str) == "string" then
+            shell.run(fs.getDir(shell.getRunningProgram()).."/"..str)
+        end
+    elseif ast[1] == "wait" then
+        local time = os.clock() + eval_expr(ast[2])
+
+        repeat until os.clock() > time
+    elseif ast[1] == "makestring" then
+        local str = eval(ast[2])
+        if type(str) == "number" then
+            return tostring(str)
+        else
+            throw("<makestring> Number expected, got "..type(str))
+        end
+    elseif ast[1] == "makenumber" then
+        local num = eval(ast[2])
+        if type(ast[2]) == "string" then
+            return tonumber(ast[2])
+        else
+            throw("<makenumber> String expected, got "..type(num))
+        end
+    elseif ast[1] == "throw" then
+        local str = eval(ast[2])
+        if type(str) == "string" then
+            error(str)
+        else
+            throw("<throw> String expected, got "..type(str))
+        end
+    elseif ast[1] == "for" then
+        local list = eval(ast[3])
+        if type(list) == "number" then
+            for i=1, list do
+                assign(ast[2], eval(i))
+                eval(ast[4])
+                assign(ast[2], eval({"none"}))
+            end
+        else
+            throw("<For> expected number to iterate, got "..type(table))
+        end
+    elseif ast[1] == "importfile" then
+        local file = eval(ast[2])
+        if type(file) == "string" then
+            import(file)
+        else
+            throw("<import>: String expected, got"..type(file))
+        end
+    elseif ast[1] == "importfolder" then
+        local folder = eval(ast[3])
+        local file = eval(ast[2])
+        if type(folder) == "string" then
+            if type(file) == "string" then
+                importFolder(folder.."/"..file)
+            else
+                throw("<Import> <From>: Module expected, got "..type(file))
+            end
+        else
+            throw("<Import> <From>: Library as string expected, got "..type(file)..", "..type(folder))
+        end
+    elseif ast[1] == "argument" then
+        local num = eval(ast[2])
+
+        if type(num) == "number" then
+            for i=1, #tArgs do
+                if i == num then
+                    return tArgs[i]
+                end
+            end
+        else
+            throw("<Arguments> Number expected, got "..type(num))
+        end
+    elseif ast[1] == "return" then
+        return eval(ast[2])
+    elseif ast[1] == "func_assign" then
+        local fn = eval(ast[3])
+
+        if type(fn) ~= "function" then
+            throw("<Assign> function expected, got "..type(fn))
+        end
+
+        return assign(ast[2], fn)
+    elseif ast[1] == "str_assign" then
+        local str = eval(ast[3])
+
+        if type(str) ~= "string" then
+            throw("<Assign> string expected, got "..type(str))
+        end
+
+        return assign(ast[2], str)
+    elseif ast[1] == "int_assign" then
+        local int = eval(ast[3])
+
+
+        if type(int) ~= "number" then
+            throw("<Assign> number expected, got "..type(int))
+        end
+
+        if int ~= math.floor(int) then
+            throw("<Assign> integer expected, got float")
+        end
+
+        return assign(ast[2], int)
+    elseif ast[1] == "flt_assign" then
+        local float = eval(ast[3])
+
+        if type(float) ~= "number" then
+            throw("<Assign> number expected, got "..type(float))
+        end
+
+        return assign(ast[2], float)
+    elseif ast[1] == "list_assign" then
+        local list = eval(ast[3])
+
+        if type(list) ~= "list" then
+            throw("<Assign> list expected, got "..type(list))
+        end
+
+        return assign(ast[2], list)
+    elseif ast[1] == "bool_assign" then
+        local bool = eval(ast[3])
+
+        if type(bool) ~= "boolean" then
+            throw("<Assign> boolean expected, got "..type(bool))
+        end
+
+        return assign(ast[2], bool)
+    elseif ast[1] == "none_assign" then
+        return assign(ast[2], eval({"none"}))
+    elseif ast[1] == "length" then
+        local len = eval(ast[2])
+
+        if type(len) == "number" then
+            throw("<Length> Attempt to get length of number")
+        end
+        return #len
+    elseif ast[1] == "type" then
+        return type(eval(ast[2]))
+    elseif ast[1] == "this" then
+        return fl
+    elseif ast[1] == "conc" then
+
+        if #ast[2] <= 2 and type(eval(ast[2][1])) == "list" then
+            if type(eval(ast[2][2])) == "string" then
+                return assign(ast[2][1], table.concat(eval(ast[2][1]), eval(ast[2][2])))
+            else
+                throw("<Conc> Attempt to: string expected #2, got "..type(eval(ast[2][1])))
+            end
+        else
+            local val = {}
+
+            for _, el in ipairs(ast[2]) do
+                local el = eval(el)
+                if type(el) ~= "string" then
+                    throw("Attempt to: String expected, got "..type(el))
+                else
+                    table.insert(val, eval(el))
+                end
+            end
+
+            return table.concat(val, "")
+        end
+    elseif ast[1] == "split" then
+        args = {}
+
+        for _, el in ipairs(ast[2]) do
+            table.insert(args, eval(el))
+        end
+
+        if #args ~= 2 then
+            throw("<Split> Attempt to: #1+#2 value expected!")
+        else
+            if type(args[1]) ~= "String" and type(args[2]) ~= "string" then
+                throw("<Split> Attempt to: #1+#2 string expected!")
+            elseif type(args[1]) ~= "string" and type(args[2]) == "string" then
+                throw("<Split> Attempt to: #1 string expected!")
+            elseif type(args[1]) == "string" and type(args[2]) ~= "string" then
+                throw("<Split> Attempt to: #2 string expected!")
+            elseif type(args[1]) == "string" and type(args[2]) == "string" then
+                ls = {}
+
+                for i in string.gmatch(args[1], args[2]) do
+                    table.insert(ls, i)
+                end
+
+                return ls
+            end
+        end
+    elseif ast[1] == "comment" then
+        return nil
+    elseif ast[1] == "eol" then
+        curLine = curLine+1
+    else
+        error("Unexpected: "..ast[1])
+    end
+end
+
+function importFolder(ifl)
+    local ifile = io.open(fs.dir(shell.getRunningProgram()).."/lib/"..ifl..".lib", "r")
+
+    if ifile then
+        local oLine = curLine
+        curLine = 1
+        local oldthrow = throw
+        ilines = {}
+
+        function throw(msg)
+            error(ifl..": "..iline..": "..msg)
+        end
+
+        for line in ifile:lines() do
+            table.insert(ilines, line)
+        end
+
+        parser:match(table.concat(ilines, " %%#n "))
+
+        curLine = oLine
+        throw = oldthrow
+    else
+        throw(ifl.." does not exists in the Rheo library!")
+    end
+end
+
+function import(ifl)
+
+    local ilines = {}
+    local ifile = io.open(fs.getDir(shell.getRunningProgram()).."/lib/"..ifl..".lib", "r")
+
+    if ifile then
+        local oLine = curLine
+        curLine = 0
+        local oldthrow = throw;
+        function throw(msg)
+            error(ifl..": "..iline..": "..msg, 0)
+        end
+
+        for line in ifile:lines() do
+            table.insert(ilines, line)
+        end
+
+        parser:match(table.concat(ilines, " %%#n "))
+
+        curLine = oLine
+        throw = oldthrow;
+    else
+        throw(ifl.." does not exists in the Rheo library!")
+    end
+end
+
+function assign(ref, value)
+    local current = Scopes[#Scopes]
+    for i = 2, #ref do
+        local next_index = ref[i]
+        if type(next_index) == "list" then
+            next_index = eval(next_index)
+        end
+
+        if i == #ref then
+            while current[next_index] and not rawget(current, next_index) do
+                current = getmetatable(current).__index
+            end
+
+            current[next_index] = value
+            return value
+        else
+            current = current[next_index]
+        end
+    end
+end
+
+function lookup(ref)
+    local current = Scopes[#Scopes]
+    for i = 2, #ref do
+        local next_index = ref[i]
+
+        if type(next_index) == "list" then
+            next_index = eval(next_index)
+        end
+        current = current[next_index]
+    end
+    return current
+end
+
+local spc = lpeg.S("\t\n ")^0
+
+local digit = lpeg.R('09')
+local number = lpeg.C( (lpeg.P("-") + digit) *
+                digit^0 *
+                ( lpeg.P('.') * digit^0 )^-1 ) / tonumber * spc
+
+local lparen = "(" * spc
+local rparen = ")" * spc
+local lbrack = "[" * spc
+local rbrack = "]" * spc
+local lcurly = "{" * spc
+local rcurly = "}" * spc
+local comma = "," * spc
+
+local expr_op = lpeg.C( lpeg.S('+-') ) * spc
+local term_op = lpeg.C( lpeg.S('*/') ) * spc
+
+local letter = lpeg.R('AZ','az')
+local name = lpeg.C( letter*( digit+letter+"_"+".")^0 ) * spc
+local doublequoted_string = lpeg.P('"') * lpeg.C( ( name+" "+"+"+"/"+"!"+"§"+"$"+"%"+"&"+"("+")"+"="+"?"+"`"+"°"+"^"+"*"+"#"+"~"+"´"+"ä"+"ö"+"ü"+"²"+"³"+"{"+"}"+"["+"]"+"'"+":"+";"+","+"-"+"<"+">"+"|"+"µ"+"?"+"@")^0 ) * lpeg.P('"') * spc
+local singlequoted_string = lpeg.P("'") * lpeg.C( ( name+" "+"+"+"/"+"!"+"§"+"$"+"%"+"&"+"("+")"+"="+"?"+"`"+"°"+"^"+"*"+"#"+"~"+"´"+"ä"+"ö"+"ü"+"²"+"³"+"{"+"}"+"["+"]"+":"+";"+","+"-"+"\""+"<"+">"+"|"+"µ"+"?"+"@")^0 ) * lpeg.P("'") * spc
+local comment = lpeg.P("//") * lpeg.C( ( name+" "+"+"+"!"+"§"+"$"+"%"+"&"+"("+")"+"="+"?"+"`"+"°"+"^"+"*"+"#"+"~"+"´"+"ä"+"ö"+"ü"+"²"+"³"+"{"+"}"+"["+"]"+"'"+":"+";"+","+"-"+"<"+">"+"|"+"µ"+"?"+"@")^0 ) * lpeg.P("//") * spc
+local string = singlequoted_string + doublequoted_string
+
+local keywords = ( lpeg.P("if") + lpeg.P("while") + lpeg.P("func") + lpeg.P("print") + lpeg.P("random") + lpeg.P("input") + lpeg.P("true") + lpeg.P("none") + lpeg.P("false") + lpeg.P("execute") + lpeg.P("wait") + lpeg.P("makestring") + lpeg.P("makenumber") + lpeg.P("throw") + lpeg.P("for") + lpeg.P("import") + lpeg.P("return") + lpeg.P("type") + lpeg.P("this") + lpeg.P("var") + lpeg.P("Static") + lpeg.P("Int") + lpeg.P("Float") + lpeg.P("String") + lpeg.P("List") + lpeg.P("conc") + lpeg.P("split") ) * spc
+local name = name - keywords
+
+local boolean = lpeg.C( lpeg.S("<>") + "=<" + "=>" + "!=" + "==" ) * spc
+
+stmt = spc * lpeg.P{
+    "LIST";
+    LIST =
+        lpeg.Ct( lpeg.Cc("list") *
+        ( lpeg.V("STMT") * spc )^0 ),
+    STMT =
+        lpeg.V("STR_ASSIGN") + lpeg.V("INT_ASSIGN") + lpeg.V("FLOAT_ASSIGN") + lpeg.V("FUNC_ASSIGN") + lpeg.V("LIST_ASSIGN") + lpeg.V("BOOL_ASSIGN") + lpeg.V("NONE_ASSIGN") +
+        lpeg.V("EOL") +
+        lpeg.V("COMMENT") +
+        lpeg.V("IMPORTFOLDER") +
+        lpeg.V("IMPORTFILE") +
+        lpeg.V("FUNCDEF") +
+        lpeg.V("IF") +
+        lpeg.V("WAIT") +
+        lpeg.V("WHILE") +
+        lpeg.V("FOR") +
+        lpeg.V("PRINT") +
+        lpeg.V("CALL") +
+        lpeg.V("THROW") +
+        lpeg.V("EXECUTE") +
+        lpeg.V("STRING") +
+        lpeg.V("INPUT"),
+    STR_ASSIGN = lpeg.Ct( lpeg.Cc("str_assign") * "var" * spc * "String" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    INT_ASSIGN = lpeg.Ct( lpeg.Cc("int_assign") * "var" * spc * "Int" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    FLOAT_ASSIGN = lpeg.Ct( lpeg.Cc("flt_assign") * "var" * spc * "Float" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    FUNC_ASSIGN = lpeg.Ct( lpeg.Cc("func_assign") * "var" * spc * "Static" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    LIST_ASSIGN = lpeg.Ct( lpeg.Cc("list_assign") * "var" * spc * "List" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    BOOL_ASSIGN = lpeg.Ct( lpeg.Cc("bool_assign") * "var" * spc * "Boolean" * spc * lpeg.V("REF") * ":" * spc * lpeg.V("VAL") ),
+    NONE_ASSIGN = lpeg.Ct( lpeg.Cc("none_assign") * "var" * spc * "None" * spc * lpeg.V("REF") ),
+    REF = lpeg.Ct( lpeg.Cc("ref") * name * ( lbrack * lpeg.V("VAL") * rbrack )^0 ),
+    EXPR = lpeg.Ct( lpeg.Cc("expr") * lpeg.V("TERM") * ( expr_op * lpeg.V("TERM") )^0 ),
+    TERM = lpeg.Ct( lpeg.Cc("term") * lpeg.V("FACT") * ( term_op * lpeg.V("FACT") )^0 ),
+    FACT =
+        number +
+        lparen * lpeg.V("EXPR") * rparen +
+        lpeg.V("REF"),
+    STRING = lpeg.Ct( lpeg.Cc("string") * string * spc ),
+    ARRAY = lpeg.Ct( lpeg.Cc("array") * lbrack * spc * lpeg.V("VAL_LIST") * spc * rbrack ),
+    VAL_LIST = lpeg.Ct( ( lpeg.V("VAL") * comma^-1 * spc )^0 ),
+    VAL = lpeg.V("CALL") + lpeg.V("ARGUMENT") + lpeg.V("ARRAY") + lpeg.V("FUNC") + lpeg.V("STRING") + lpeg.V("EXPR") + lpeg.V("RANDOM") + lpeg.V("INPUT") + lpeg.V("MAKESTRING") + lpeg.V("MAKENUMBER") + lpeg.V("BOOLS") + lpeg.V("LEN") + lpeg.V("TYPE") + lpeg.V("THIS") + lpeg.V("CONC") + lpeg.V("SPLIT"),
+    BOOL = lpeg.Ct( lpeg.Cc("bool") * lpeg.V("VAL") * boolean * lpeg.V("VAL") ),
+    IF = lpeg.Ct( lpeg.C("if") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc * lcurly * lpeg.V("LIST") * spc * rcurly * ";"),
+    WHILE = lpeg.Ct( lpeg.C("while") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
+    FOR = lpeg.Ct( lpeg.C("for") * lparen * spc * lpeg.V("REF") * "in" * spc * lpeg.V("VAL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
+    CALL = lpeg.Ct( lpeg.Cc("call") * lpeg.V("REF") * spc * lparen * lpeg.V("VAL_LIST") * rparen ),
+    FUNC = lpeg.Ct( lpeg.C("func") * lparen * lpeg.V("NAME_LIST") * rparen * ":" * spc * lpeg.V("LIST") * spc * lpeg.V("RETURN") ),
+    FUNCDEF = lpeg.Ct( lpeg.Cc("funcdef") * "func" * spc * lpeg.V("REF") * lparen * lpeg.V("NAME_LIST") * rparen * ":" * spc * lpeg.V("LIST") * spc * ";" ),
+    PRINT = lpeg.Ct( lpeg.C("print") * lparen * lpeg.V("VAL") * rparen ),
+    RANDOM = lpeg.Ct( lpeg.C("random") * lparen * spc * lpeg.V("VAL") * comma^0 * spc * lpeg.V("VAL") * spc * rparen ),
+    MAKESTRING = lpeg.Ct( lpeg.C("makestring") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    MAKENUMBER = lpeg.Ct( lpeg.C("makenumber") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    THROW = lpeg.Ct( lpeg.C("throw") * spc * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    INPUT = lpeg.Ct( lpeg.C("input") * lparen * spc * rparen),
+    BOOLS = lpeg.V("NONE") + lpeg.V("TRUE") + lpeg.V("FALSE"),
+    NONE = lpeg.Ct( lpeg.C("none") ),
+    TRUE = lpeg.Ct( lpeg.C("true") ),
+    FALSE = lpeg.Ct( lpeg.C("false") ),
+    THIS = lpeg.Ct( lpeg.C("this") ),
+    EXECUTE = lpeg.Ct( lpeg.C("execute") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    WAIT = lpeg.Ct( lpeg.C("wait") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    IMPORTFILE = lpeg.Ct( lpeg.Cc("importfile") * "import" * spc * lpeg.V("VAL") ),
+    IMPORTFOLDER = lpeg.Ct( lpeg.Cc("importfolder") * "import" * spc * lpeg.V("VAL") * spc * "from" * spc * lpeg.V("VAL") ),
+    ARGUMENT = lpeg.Ct( lpeg.C("argument") * lbrack * lpeg.V("EXPR") * rbrack ),
+    COMMENT = lpeg.Ct( lpeg.Cc("comment") * comment ),
+    EOL = lpeg.Ct( lpeg.Cc("eol") * "%%#n" ),
+    RETURN = lpeg.Ct( lpeg.C("return") * spc * lpeg.V("VAL") ),
+    LEN = lpeg.Ct( lpeg.Cc("length") * "~" * lpeg.V("VAL") ),
+    TYPE = lpeg.Ct( lpeg.C("type") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    CONC = lpeg.Ct( lpeg.C("conc") * lparen * spc * lpeg.V("VAL_LIST") * spc * rparen ),
+    SPLIT = lpeg.Ct( lpeg.C("split") * lparen * spc * lpeg.V("VAL_LIST") * rparen ),
+    NAME_LIST = lpeg.Ct( ( name * comma^0 )^0 )
+}
+
+local oldType = type;
+
+function type(val)
+    if oldType(val) == "table" then
+        if val.args and val.code and val.scope then
+            return "function"
+        else
+            return "list"
+        end
+    elseif oldType(val) == "nil" then
+        return "none"
+    else
+        return oldType(val)
+    end
+end
+
+local parser = stmt / eval
+
+if isFile == true then
+    function throw(msg)
+        error(fl..": "..curLine..": "..msg, 0)
+    end
+
+    file = io.open(fl, "r")
+
+    if file then
+        curLine = 1
+        lines = {}
+
+        for line in file:lines() do
+            table.insert(lines, line)
+        end
+
+        file:close()
+
+        code = table.concat(lines, " %%#n ")
+        parser:match(code)
+    else
+        error(fl.." does not exists!",0)
+    end
+else
+    term.setTextColor(colors.yellow)
+    print("Rheo v1.0")
+    print(" ")
+    print("Rheo interactive interpreter")
+    print("Type exit() to leave the program")
+    print("")
+    print("")
+    while true do
+        function throw(msg)
+            printError("<303>:: Error while parsing: Attempt to: "..msg)
+        end
+        term.setTextColor(colors.lime)
+        term.write("> ")
+        term.setTextColor(colors.white)
+        local input = io.read()
+
+        if input == "exit()" then
+            error()
+        else
+            parser:match(input)
+        end
+    end
+end
