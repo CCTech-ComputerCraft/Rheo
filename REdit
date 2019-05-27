@@ -121,13 +121,19 @@ local inBuilt = {
     ["execute"] = true,
     ["wait"] = true,
     ["input"] = true,
+    ["random"] = true,
     ["makenumber"] = true,
-    ["makestring"] = true
+    ["makestring"] = true,
+    ["do"] = true,
+    ["dolua"] = true,
+    ["conc"] = true,
+    ["split"] = true
 }
 
 local rtn = {
     ["return"] = true,
-    ["throw"] = true
+    ["throw"] = true,
+    ["in"] = true
 }
 
 local vars = {

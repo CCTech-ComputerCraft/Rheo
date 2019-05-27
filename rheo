@@ -338,6 +338,33 @@ function eval(ast)
                 return ls
             end
         end
+    elseif ast[1] == "dolua" then
+        local str = eval(ast[2])
+
+        if type(str) == "string" then
+            local func, err = loadstring(str)
+
+            if not err then
+                func()
+            else
+                throw("<dolua> Attempt to:LuaError: "..err)
+            end
+        else
+            throw("<dolua> Attempt to: string expected, got "..type(str))
+        end
+    elseif ast[1] == "do" then
+        local str = eval(ast[2])
+
+        if type(str) == "string" then
+            local oLine = curLine
+            local curLine = 1
+
+            parser:match(str)
+
+            curLine = oLine
+        else
+            throw("<do> Attempt to: string expected, got "..type(str))
+        end
     elseif ast[1] == "comment" then
         return nil
     elseif ast[1] == "eol" then
@@ -458,10 +485,10 @@ local singlequoted_string = lpeg.P("'") * lpeg.C( ( name+" "+"+"+"/"+"!"+"§"+"$
 local comment = lpeg.P("//") * lpeg.C( ( name+" "+"+"+"!"+"§"+"$"+"%"+"&"+"("+")"+"="+"?"+"`"+"°"+"^"+"*"+"#"+"~"+"´"+"ä"+"ö"+"ü"+"²"+"³"+"{"+"}"+"["+"]"+"'"+":"+";"+","+"-"+"<"+">"+"|"+"µ"+"?"+"@")^0 ) * lpeg.P("//") * spc
 local string = singlequoted_string + doublequoted_string
 
-local keywords = ( lpeg.P("if") + lpeg.P("while") + lpeg.P("func") + lpeg.P("print") + lpeg.P("random") + lpeg.P("input") + lpeg.P("true") + lpeg.P("none") + lpeg.P("false") + lpeg.P("execute") + lpeg.P("wait") + lpeg.P("makestring") + lpeg.P("makenumber") + lpeg.P("throw") + lpeg.P("for") + lpeg.P("import") + lpeg.P("return") + lpeg.P("type") + lpeg.P("this") + lpeg.P("var") + lpeg.P("Static") + lpeg.P("Int") + lpeg.P("Float") + lpeg.P("String") + lpeg.P("List") + lpeg.P("conc") + lpeg.P("split") ) * spc
+local keywords = ( lpeg.P("if") + lpeg.P("while") + lpeg.P("func") + lpeg.P("print") + lpeg.P("random") + lpeg.P("input") + lpeg.P("true") + lpeg.P("none") + lpeg.P("false") + lpeg.P("execute") + lpeg.P("wait") + lpeg.P("makestring") + lpeg.P("makenumber") + lpeg.P("throw") + lpeg.P("for") + lpeg.P("import") + lpeg.P("return") + lpeg.P("type") + lpeg.P("this") + lpeg.P("var") + lpeg.P("Static") + lpeg.P("Int") + lpeg.P("Float") + lpeg.P("String") + lpeg.P("List") + lpeg.P("conc") + lpeg.P("split") + lpeg.P("dolua") ) * spc
 local name = name - keywords
 
-local boolean = lpeg.C( lpeg.S("<>") + "=<" + "=>" + "!=" + "==" ) * spc
+local boolean = lpeg.C( lpeg.S("<=>") + "<=" + ">=" + "!=" + "==" ) * spc
 
 stmt = spc * lpeg.P{
     "LIST";
@@ -474,6 +501,8 @@ stmt = spc * lpeg.P{
         lpeg.V("COMMENT") +
         lpeg.V("IMPORTFOLDER") +
         lpeg.V("IMPORTFILE") +
+        lpeg.V("DOLUA") +
+        lpeg.V("DO") +
         lpeg.V("FUNCDEF") +
         lpeg.V("IF") +
         lpeg.V("WAIT") +
@@ -503,7 +532,7 @@ stmt = spc * lpeg.P{
     ARRAY = lpeg.Ct( lpeg.Cc("array") * lbrack * spc * lpeg.V("VAL_LIST") * spc * rbrack ),
     VAL_LIST = lpeg.Ct( ( lpeg.V("VAL") * comma^-1 * spc )^0 ),
     VAL = lpeg.V("CALL") + lpeg.V("ARGUMENT") + lpeg.V("ARRAY") + lpeg.V("FUNC") + lpeg.V("STRING") + lpeg.V("EXPR") + lpeg.V("RANDOM") + lpeg.V("INPUT") + lpeg.V("MAKESTRING") + lpeg.V("MAKENUMBER") + lpeg.V("BOOLS") + lpeg.V("LEN") + lpeg.V("TYPE") + lpeg.V("THIS") + lpeg.V("CONC") + lpeg.V("SPLIT"),
-    BOOL = lpeg.Ct( lpeg.Cc("bool") * lpeg.V("VAL") * boolean * lpeg.V("VAL") ),
+    BOOL = lpeg.Ct( lpeg.Cc("bool") * ( lpeg.V("REF") + lpeg.V("VAL") ) * boolean * ( lpeg.V("VAL") + lpeg.V("REF") ) ),
     IF = lpeg.Ct( lpeg.C("if") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc * lcurly * lpeg.V("LIST") * spc * rcurly * ";"),
     WHILE = lpeg.Ct( lpeg.C("while") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
     FOR = lpeg.Ct( lpeg.C("for") * lparen * spc * lpeg.V("REF") * "in" * spc * lpeg.V("VAL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
@@ -533,6 +562,8 @@ stmt = spc * lpeg.P{
     TYPE = lpeg.Ct( lpeg.C("type") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
     CONC = lpeg.Ct( lpeg.C("conc") * lparen * spc * lpeg.V("VAL_LIST") * spc * rparen ),
     SPLIT = lpeg.Ct( lpeg.C("split") * lparen * spc * lpeg.V("VAL_LIST") * rparen ),
+    DOLUA = lpeg.Ct( lpeg.C("dolua") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    DO = lpeg.Ct( lpeg.C("do") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
     NAME_LIST = lpeg.Ct( ( name * comma^0 )^0 )
 }
 
@@ -542,6 +573,8 @@ function type(val)
     if oldType(val) == "table" then
         if val.args and val.code and val.scope then
             return "function"
+        elseif val["x"] and val["y"] then
+            return "vector"
         else
             return "list"
         end
@@ -552,7 +585,7 @@ function type(val)
     end
 end
 
-local parser = stmt / eval
+parser = stmt / eval
 
 if isFile == true then
     function throw(msg)
