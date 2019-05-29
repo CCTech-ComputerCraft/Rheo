@@ -13,6 +13,7 @@ end
 
 function eval_expr(expr)
     local accum = eval(expr[2])
+
     for i = 3, #expr, 2 do
         local operator = expr[i]
         local num2 = eval(expr[i+1])
@@ -25,6 +26,8 @@ function eval_expr(expr)
             accum = accum * num2
         elseif operator == '/' then
             accum = accum / num2
+        else
+            throw("Attempt to var (assign) ?")
         end
     end
     return accum
@@ -50,6 +53,36 @@ function eval_bool(expr)
     end
 end
 
+function eval_if(if_ast)
+    local last_bool
+    local isElse = false
+
+    for i=1, #if_ast do
+        if isElse == true then
+            break
+        end
+        if if_ast[i] == "if" then
+            if eval_bool(if_ast[i+1]) then
+                last_bool = eval_bool(if_ast[i+1])
+                return eval(if_ast[i+2])
+            end
+        elseif if_ast[i][1] == "elseif" then
+            if last_bool then
+
+            elseif eval_bool(if_ast[i][2]) then
+                last_bool = eval_bool(if_ast[i][2])
+                return eval(if_ast[i][3])
+            end
+        elseif if_ast[i][1] == "else" then
+            if last_bool then
+            else
+                isElse = true
+                return eval(if_ast[i][2])
+            end
+        end
+    end
+end
+
 function eval(ast)
     if type(ast) == "number" then
         return ast
@@ -62,6 +95,9 @@ function eval(ast)
         end
         if string.find(ast, "%%#dQ") then
             ast = ast:gsub("%%#dQ", "\'")
+        end
+        if string.find(ast, "%%#") then
+            ast = ast:gsub("%%#", "\\")
         end
         return ast
     elseif ast[1] == "string" then
@@ -92,11 +128,8 @@ function eval(ast)
 
         return last
     elseif ast[1] == "if" then
-        if eval_bool(ast[2]) then
-            return eval(ast[3])
-        else
-            return eval(ast[4])
-        end
+
+        return eval_if(ast)
     elseif ast[1] == "while" then
         while eval_bool(ast[2]) do
             eval(ast[3])
@@ -128,8 +161,10 @@ function eval(ast)
 
         table.insert(Scopes, scope)
         eval(fn.code)
+        local reVal = eval(fn.reVal)
+
         table.remove(Scopes)
-        return eval(fn.reVal)
+        return reVal
     elseif ast[1] == "print" then
         local str = eval(ast[2])
 
@@ -176,7 +211,7 @@ function eval(ast)
     elseif ast[1] == "throw" then
         local str = eval(ast[2])
         if type(str) == "string" then
-            error(str)
+            throw(str)
         else
             throw("<throw> String expected, got "..type(str))
         end
@@ -266,6 +301,7 @@ function eval(ast)
 
         if type(list) ~= "list" then
             throw("<Assign> list expected, got "..type(list))
+            return
         end
 
         return assign(ast[2], list)
@@ -274,6 +310,7 @@ function eval(ast)
 
         if type(bool) ~= "boolean" then
             throw("<Assign> boolean expected, got "..type(bool))
+            return nil
         end
 
         return assign(ast[2], bool)
@@ -364,6 +401,111 @@ function eval(ast)
             curLine = oLine
         else
             throw("<do> Attempt to: string expected, got "..type(str))
+        end
+    elseif ast[1] == "parseDict" then
+        local str = eval(ast[2])
+        local dict = {}
+
+        if type(str) == "list" then
+            for i=1, #str do
+                table.insert(dict, tostring(str[i]).." => ".."true\n")
+            end
+            return table.concat(dict, "")
+        elseif type(str) == "string" then
+            local list = {}
+            for i in string.gmatch(str, "%S+") do
+                table.insert(list, i)
+            end
+
+            for i=1, #list do
+                if list[i] == "=>" then
+                    table.remove(list, i)
+                    table.remove(list, i)
+                end
+            end
+
+            return list
+        else
+            throw("Attempt to parse dict: string or list expected, got "..type(str))
+        end
+    elseif ast[1] == "readFile" then
+        local str = eval(ast[2])
+
+        if type(str) == "string" then
+            local file = fs.open(fs.getDir(fl).."/"..str, "r")
+
+            if file then
+                local inp = file.readAll()
+                file.close()
+
+                return inp
+            else
+                throw("File not found!")
+            end
+        else
+            throw("Attept to read "..type(str))
+        end
+    elseif ast[1] == "writeFile" then
+        local str = eval(ast[2])
+        local input = eval(ast[3])
+
+        if type(str) ~= "string" then
+            throw("Attempt to write "..type(str))
+            return
+        end
+
+        if type(input) ~= "string" then
+            throw("Expected string to write, got "..type(input))
+            return
+        end
+        if type(str) == "string" then
+            local file = fs.open(fs.getDir(fl).."/"..str, "w")
+
+            file.write(input)
+            file.close()
+        end
+    elseif ast[1] == "event" then
+        local str = eval(ast[2])
+
+        if type(str) ~= "string" then
+            throw("Attempt to pullEvent: string expected, got "..type(str))
+        end
+        local nStr = {}
+
+        for i in string.gmatch(str, "[^:]+") do
+            table.insert(nStr, i)
+        end
+
+        if #nStr < 2 or #nStr > 2 then
+            throw("Attempt to event: unexpected pattern")
+        end
+
+        if #nStr == 2 then
+            local executor = nStr[1]
+            local event = nStr[2]
+
+            if executor == "Input" then
+                if event == "mouse_click" then
+                    local event, button, x, y = os.pullEvent("mouse_click")
+                    if button == 1 then
+                        button = "left"
+                    elseif button == 2 then
+                        button = "right"
+                    elseif button == 3 then
+                        button = "middle"
+                    end
+
+                    return {button, x, y}
+                elseif event == "key" then
+                    local event, key, isHeld = os.pullEvent("key")
+
+                    return {keys.getName(key), isHeld}
+                else
+                    throw("Attempt to except unknown event")
+                end
+            else
+                throw("Attempt to call unknown class <executor> (?)")
+            end
         end
     elseif ast[1] == "comment" then
         return nil
@@ -485,10 +627,10 @@ local singlequoted_string = lpeg.P("'") * lpeg.C( ( name+" "+"+"+"/"+"!"+"§"+"$
 local comment = lpeg.P("//") * lpeg.C( ( name+" "+"+"+"!"+"§"+"$"+"%"+"&"+"("+")"+"="+"?"+"`"+"°"+"^"+"*"+"#"+"~"+"´"+"ä"+"ö"+"ü"+"²"+"³"+"{"+"}"+"["+"]"+"'"+":"+";"+","+"-"+"<"+">"+"|"+"µ"+"?"+"@")^0 ) * lpeg.P("//") * spc
 local string = singlequoted_string + doublequoted_string
 
-local keywords = ( lpeg.P("if") + lpeg.P("while") + lpeg.P("func") + lpeg.P("print") + lpeg.P("random") + lpeg.P("input") + lpeg.P("true") + lpeg.P("none") + lpeg.P("false") + lpeg.P("execute") + lpeg.P("wait") + lpeg.P("makestring") + lpeg.P("makenumber") + lpeg.P("throw") + lpeg.P("for") + lpeg.P("import") + lpeg.P("return") + lpeg.P("type") + lpeg.P("this") + lpeg.P("var") + lpeg.P("Static") + lpeg.P("Int") + lpeg.P("Float") + lpeg.P("String") + lpeg.P("List") + lpeg.P("conc") + lpeg.P("split") + lpeg.P("dolua") ) * spc
+local keywords = ( lpeg.P("if") + lpeg.P("else") + lpeg.P("elseif") + lpeg.P("while") + lpeg.P("func") + lpeg.P("print") + lpeg.P("random") + lpeg.P("input") + lpeg.P("true") + lpeg.P("none") + lpeg.P("false") + lpeg.P("execute") + lpeg.P("wait") + lpeg.P("makestring") + lpeg.P("makenumber") + lpeg.P("throw") + lpeg.P("for") + lpeg.P("import") + lpeg.P("return") + lpeg.P("type") + lpeg.P("this") + lpeg.P("var") + lpeg.P("Static") + lpeg.P("Int") + lpeg.P("Float") + lpeg.P("String") + lpeg.P("List") + lpeg.P("conc") + lpeg.P("split") + lpeg.P("dolua") + lpeg.P("event") + lpeg.P("parseDict") + lpeg.P("writeFile") + lpeg.P("readFile") ) * spc
 local name = name - keywords
 
-local boolean = lpeg.C( lpeg.S("<=>") + "<=" + ">=" + "!=" + "==" ) * spc
+local boolean = lpeg.C( lpeg.S("<>") + "<=" + ">=" + "!=" + "==" ) * spc
 
 stmt = spc * lpeg.P{
     "LIST";
@@ -498,13 +640,14 @@ stmt = spc * lpeg.P{
     STMT =
         lpeg.V("STR_ASSIGN") + lpeg.V("INT_ASSIGN") + lpeg.V("FLOAT_ASSIGN") + lpeg.V("FUNC_ASSIGN") + lpeg.V("LIST_ASSIGN") + lpeg.V("BOOL_ASSIGN") + lpeg.V("NONE_ASSIGN") +
         lpeg.V("EOL") +
+        lpeg.V("IF") +
         lpeg.V("COMMENT") +
         lpeg.V("IMPORTFOLDER") +
         lpeg.V("IMPORTFILE") +
         lpeg.V("DOLUA") +
         lpeg.V("DO") +
+        lpeg.V("WRITEFILE") +
         lpeg.V("FUNCDEF") +
-        lpeg.V("IF") +
         lpeg.V("WAIT") +
         lpeg.V("WHILE") +
         lpeg.V("FOR") +
@@ -531,14 +674,16 @@ stmt = spc * lpeg.P{
     STRING = lpeg.Ct( lpeg.Cc("string") * string * spc ),
     ARRAY = lpeg.Ct( lpeg.Cc("array") * lbrack * spc * lpeg.V("VAL_LIST") * spc * rbrack ),
     VAL_LIST = lpeg.Ct( ( lpeg.V("VAL") * comma^-1 * spc )^0 ),
-    VAL = lpeg.V("CALL") + lpeg.V("ARGUMENT") + lpeg.V("ARRAY") + lpeg.V("FUNC") + lpeg.V("STRING") + lpeg.V("EXPR") + lpeg.V("RANDOM") + lpeg.V("INPUT") + lpeg.V("MAKESTRING") + lpeg.V("MAKENUMBER") + lpeg.V("BOOLS") + lpeg.V("LEN") + lpeg.V("TYPE") + lpeg.V("THIS") + lpeg.V("CONC") + lpeg.V("SPLIT"),
-    BOOL = lpeg.Ct( lpeg.Cc("bool") * ( lpeg.V("REF") + lpeg.V("VAL") ) * boolean * ( lpeg.V("VAL") + lpeg.V("REF") ) ),
-    IF = lpeg.Ct( lpeg.C("if") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc * lcurly * lpeg.V("LIST") * spc * rcurly * ";"),
-    WHILE = lpeg.Ct( lpeg.C("while") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
+    VAL = lpeg.V("CALL") + lpeg.V("ARGUMENT") + lpeg.V("ARRAY") + lpeg.V("FUNC") + lpeg.V("STRING") + lpeg.V("EXPR") + lpeg.V("RANDOM") + lpeg.V("INPUT") + lpeg.V("MAKESTRING") + lpeg.V("MAKENUMBER") + lpeg.V("BOOLS") + lpeg.V("LEN") + lpeg.V("TYPE") + lpeg.V("THIS") + lpeg.V("CONC") + lpeg.V("SPLIT") + lpeg.V("EVENT") + lpeg.V("PARSEDICT") + lpeg.V("READFILE"),
+    BOOL = lpeg.Ct( lpeg.Cc("bool") * ( lpeg.V("REF") + lpeg.V("VAL") ) * spc * boolean * spc * ( lpeg.V("REF") + lpeg.V("VAL") ) ),
+    IF = lpeg.Ct( lpeg.C("if") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc * ( lpeg.V("ELSEIF") + lpeg.V("ELSE") )^0 * ";" ),
+    ELSE = lpeg.Ct( lpeg.C("else") * ":" * spc * lpeg.V("LIST") ),
+    ELSEIF = lpeg.Ct( lpeg.C("elseif") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") ),
+    WHILE = lpeg.Ct( lpeg.C("while") * lparen * spc * lpeg.V("BOOL") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc ),
     FOR = lpeg.Ct( lpeg.C("for") * lparen * spc * lpeg.V("REF") * "in" * spc * lpeg.V("VAL") * spc * rparen * ":" * spc * lpeg.V("LIST") * ";" ),
     CALL = lpeg.Ct( lpeg.Cc("call") * lpeg.V("REF") * spc * lparen * lpeg.V("VAL_LIST") * rparen ),
     FUNC = lpeg.Ct( lpeg.C("func") * lparen * lpeg.V("NAME_LIST") * rparen * ":" * spc * lpeg.V("LIST") * spc * lpeg.V("RETURN") ),
-    FUNCDEF = lpeg.Ct( lpeg.Cc("funcdef") * "func" * spc * lpeg.V("REF") * lparen * lpeg.V("NAME_LIST") * rparen * ":" * spc * lpeg.V("LIST") * spc * ";" ),
+    FUNCDEF = lpeg.Ct( lpeg.Cc("funcdef") * "func" * spc * lpeg.V("REF") * spc * lparen * spc * lpeg.V("NAME_LIST") * spc * rparen * ":" * spc * lpeg.V("LIST") * spc * ";"),
     PRINT = lpeg.Ct( lpeg.C("print") * lparen * lpeg.V("VAL") * rparen ),
     RANDOM = lpeg.Ct( lpeg.C("random") * lparen * spc * lpeg.V("VAL") * comma^0 * spc * lpeg.V("VAL") * spc * rparen ),
     MAKESTRING = lpeg.Ct( lpeg.C("makestring") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
@@ -564,6 +709,10 @@ stmt = spc * lpeg.P{
     SPLIT = lpeg.Ct( lpeg.C("split") * lparen * spc * lpeg.V("VAL_LIST") * rparen ),
     DOLUA = lpeg.Ct( lpeg.C("dolua") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
     DO = lpeg.Ct( lpeg.C("do") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    PARSEDICT = lpeg.Ct( lpeg.C("parseDict") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    EVENT = lpeg.Ct( lpeg.C("event") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
+    WRITEFILE = lpeg.Ct( lpeg.C("writeFile") * lparen * spc * lpeg.V("VAL") * "," * spc * lpeg.V("VAL") * spc * rparen ),
+    READFILE = lpeg.Ct( lpeg.C("readFile") * lparen * spc * lpeg.V("VAL") * spc * rparen ),
     NAME_LIST = lpeg.Ct( ( name * comma^0 )^0 )
 }
 

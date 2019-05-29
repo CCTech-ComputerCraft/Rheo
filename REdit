@@ -105,18 +105,24 @@ end
 
 local tKeywords = {
     ["if"] = true,
+    ["elseif"] = true,
+    ["else"] = true,
     ["var"] = true,
     ["func"] = true,
     ["while"] = true,
     ["for"] = true,
-    ["arguments"] = true,
-    ["none"] = true,
     ["import"] = true,
     ["from"] = true,
     ["this"] = true
 }
 
 local inBuilt = {
+    ["arguments"] = true,
+    ["type"] = true,
+    ["event"] = true,
+    ["parseDict"] = true,
+    ["writeFile"] = true,
+    ["readFile"] = true,
     ["print"] = true,
     ["execute"] = true,
     ["wait"] = true,
@@ -133,7 +139,10 @@ local inBuilt = {
 local rtn = {
     ["return"] = true,
     ["throw"] = true,
-    ["in"] = true
+    ["in"] = true,
+    ["true"] = true,
+    ["false"] = true,
+    ["none"] = true
 }
 
 local vars = {

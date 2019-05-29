@@ -1,34 +1,35 @@
-func list.remove(list, keyNumber):
-    var None list[keyNumber];
+var Static list.remove: func(list, value):
+    var List rmVal: [none]
+    for(i in ~list):
+        if(list[i] == value):
+            var None list[i]
+            var List rmVal: [value];;
+    return rmVal
 
-func list.replace(list, keyNumber, value):
-    if(type(value) == "number"):
-        var Float list[keyNumber]: value;
-    if(type(value) == "string"):
-        var String list[keyNumber]: value;
-    if(type(value) == "list"):
-        var List list[keyNumber]: value;
-    if(type(value) == "funcion"):
-        var Static list[keyNumber]: value;
-    if(type(value) == "boolean"):
-        var Boolean list[keyNumber]: value;
-    if(type(value) == "none"):
-        var None list[keyNumber];;
+var Static list.find: func(list, value):
+    if(type(list) != "list"):
+        throw(conc("list expected, got ", type(list)));    
 
+    var Boolean found: false
+    for(i in ~list):
+        if(list[i] == value):
+            var Boolean found: true;;
+    return found
+    
 func list.insert(list, value):
     if(type(list) != "list"):
         throw("List expected!");
     var Int len: ~list
     var Int len: len+1
     if(type(value) == "number"):
-        var Float list[len]: value;
-    if(type(value) == "string"):
-        var String list[len]: value;
-    if(type(value) == "list"):
-        var List list[len]: value;
-    if(type(value) == "function"):
-        var Static list[len]: value;
-    if(type(value) == "boolean"):
-        var Boolean list[len]: value;
-    if(type(value) == "none"):
+        var Float list[len]: value
+    elseif(type(value) == "string"):
+        var String list[len]: value
+    elseif(type(value) == "list"):
+        var List list[len]: value
+    elseif(type(value) == "function"):
+        var Static list[len]: value
+    elseif(type(value) == "boolean"):
+        var Boolean list[len]: value
+    elseif(type(value) == "none"):
         var None list[len];;
