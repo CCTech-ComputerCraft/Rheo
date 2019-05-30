@@ -409,7 +409,7 @@ local tMenuFuncs = {
         local sTempPath = "/.temp"
         local ok, err = save( sTempPath )
         if ok then
-            local nTask = shell.openTab( settings.get("rheo_home").."/rheo", sTempPath)
+            local nTask = shell.openTab( settings.get("rheo_home").."/rheo", "-rs", sTempPath)
             if nTask then
                 shell.switchTab( nTask )
             else

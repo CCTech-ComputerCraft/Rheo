@@ -3,12 +3,117 @@ local lpeg = require("lulpeg")
 local tArgs = {...}
 local Scopes = { {} }
 
-if #tArgs < 1 then
+if #tArgs < 2 then
     isFile = false
-else
-    fl = shell.resolve(tArgs[1])
+end
+
+if tArgs[1] == "-rs" then
+    fl = shell.resolve(tArgs[2])
     table.remove(tArgs, 1)
+    table.remove(tArgs, 2)
     isFile = true
+elseif tArgs[1] == "-h" then
+    term.setTextColor(colors.lime)
+    print("Rheo help:")
+    term.setTextColor(colors.blue)
+    print("-rs         -- Runs a RheoScript file")
+    print("-cra        -- Creates a RheArchive")
+    print("-ra         -- Runs a RheoArchive file")
+    return
+elseif tArgs[1] == "-ra" then
+    if #tArgs == 2 then
+        if fs.exists(tArgs[2]) then
+            local file = fs.open(shell.resolve(tArgs[2]), "r")
+            local handler = file.readAll()
+            file.close()
+
+            if file then
+                local func, err = loadstring(handler)
+
+                if err then
+                    error("Corruped file: "..tArgs[2], 0)
+                else
+                    func()
+                end
+
+                if files then
+                    if not files["main.rs"] then
+                        error("No main.rs file has been found!")
+                    else
+                        fs.makeDir("/.raTmp")
+                        local curDir = shell.dir()
+                        shell.setDir("/.raTmp")
+
+                        for k, v in pairs(files) do
+                            local file = fs.open("/.raTmp/"..k, "w")
+                            file.write(v)
+                            file.close()
+                        end
+
+                        shell.run(settings.get("rheo.home").."/rheo -rs", "main.rs")
+                        shell.setDir(curDir)
+                        fs.delete("/.raTmp")
+                    end
+                end
+            end
+        end
+    else
+        error("Usage: rheo -ra <File>", 0)
+    end
+    return
+elseif tArgs[1] == "-cra" then
+    if #tArgs < 3 then
+        error("Usage: rheo -cra <File> <ArchiveFile>", 0)
+    end
+
+    local files = {}
+
+    function readFile(dir, fl)
+        local file = fs.open(dir.."/"..fl, "r")
+        if file then
+            local handle = file.readAll()
+
+            if dir == tArgs[2] then
+                files[fl] = handle
+            else
+                local nDir = {}
+                for i in string.gmatch(dir, "[^/]+") do
+                    table.insert(nDir, i)
+                end
+
+                table.remove(nDir, 1)
+                local dir = table.concat(nDir, "/")
+                print(dir)
+                files[dir.."/"..fl] = handle
+            end
+            file.close()
+        else
+            printError("An error occured while reading: "..fl)
+        end
+    end
+
+    function readDir(dir)
+        for _, file in ipairs(fs.list(dir)) do
+            if fs.isDir(file) then
+                readDir(dir.."/"..file)
+            else
+                readFile(dir, file)
+            end
+        end
+    end
+
+    if fs.isDir(tArgs[2]) then
+        readDir(tArgs[2])
+    else
+        error("Directory expected, got file!")
+    end
+
+    local file = fs.open(tArgs[3]..".ra", "w")
+    file.write("files = "..textutils.serialize(files))
+    file.close()
+    return
+else
+    error("Unrecognized: "..tArgs[1].."\n use rheo -h")
 end
 
 function eval_expr(expr)
@@ -395,8 +500,12 @@ function eval(ast)
         if type(str) == "string" then
             local oLine = curLine
             local curLine = 1
+            local exec = {}
 
-            parser:match(str)
+            for i in string.gmatch(str, "[^\r\n]+") do
+                table.insert(exec, i)
+            end
+            parser:match(table.concat(exec, " %%#n "))
 
             curLine = oLine
         else
